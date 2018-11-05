@@ -35,18 +35,55 @@ def note_names(start, stop):
 
 def make_corrections(spec, freq):
     import numpy as np
-    note_freq = frequencies('C0', 'C8')
+    note_freq = frequencies('A0', 'C#8') # end is not included
     rows = []
-    for i in range(1, len(note_freq)-1):
-        low  = note_freq[i] - (1/2)*(note_freq[i]-note_freq[i-1])
-        high = note_freq[i] + (1/2)*(note_freq[i+1]-note_freq[i])
-        ind  = (freq>=low)&(freq<=high)
-        row  = spec[ind,:].sum(0) # Average it
-        if (ind.sum() > 0):
-             row /= np.mean(ind)
+    a = 2**(1/12)
+    lo_factor = 0.5*(1+1/a)
+    hi_factor = 0.5*(1+a) 
+    for i in range(len(note_freq)):
+        lo = note_freq[i]*lo_factor
+        hi = note_freq[i]*hi_factor
+        ind = (freq>=lo)&(freq<=hi)
+        
+        #if lo <= 1174.66 <= hi:
+#         print(np.where(ind), note_freq[i], lo, hi) #, repr(spec[ind,:]))
+        
+        if ind.sum() != 0:
+            #row = spec[ind,:].max(0)
+            row = normal_peak(spec[ind,:], freq[ind])
+        else:
+            row = np.zeros(spec.shape[1])
         rows.append(row)
-    data = np.asarray(rows)
-    return data, note_freq[1:-1]
+    data = np.vstack(rows)
+    return data, note_freq
+
+def spect(wav, fs):
+    import numpy as np
+    smallest_nps = fs/24 * 4/3 
+    smallest_nps = 2**int(np.log2(smallest_nps))
+    note_freq = frequencies('A0', 'D8')
+    df = np.diff(note_freq)
+    nps = np.maximum(np.int64(2**np.ceil(np.log2(fs/df))), smallest_nps)
+    nps_uniq = list(np.unique(nps))
+    
+    data = []
+    for nperseg in nps_uniq:
+        data.append(sg.spectrogram(wav, fs, nperseg=nperseg, noverlap=nperseg-smallest_nps))
+    a = 2**(1/12)
+    lo_factor = 0.5*(1+1/a)
+    hi_factor = 0.5*(1+a) 
+    full_spec = np.zeros((len(note_freq)-1, len(data[0][1])))
+    for i,(nf,nperseg) in enumerate(zip(note_freq, nps)):
+        nps_ind = nps_uniq.index(nperseg)
+        freq, time, spec = data[nps_ind]
+        lo = nf*lo_factor
+        hi = nf*hi_factor
+        ind = (freq>=lo)&(freq<=hi)
+#         print(nf, ind.sum(), abs(freq[ind] - nf).min() / nf)
+        peak = normal_peak(spec[ind,:], freq[ind])
+        full_spec[i,:len(time)] = peak
+
+    return note_freq[:-1], data[0][1], full_spec
 
 
 def display_ratios(corr, argsort, lbl='N/A'):
@@ -67,3 +104,33 @@ def display_spec(time, freq, spec, ylim=8192):
     plt.xlabel('Time [sec]')
     plt.gca().set_aspect('auto')
     plt.show()
+
+def normal_peak(vals, freq):
+    import numpy as np
+    if len(freq) == 1: return vals
+    df = freq[1] - freq[0] # difference between frequencies
+    sums = vals.sum(0, keepdims=True) # the sum across all values, for each time
+    weights = vals/sums # the weights for each time
+    mean = (weights*freq[:,None]).sum(0, keepdims=True) # the weighted mean
+    var = (((freq[:,None]-mean)**2)*weights).sum(0)/df # the weighted variance
+    peak = 1/np.sqrt(2*np.pi*var) # easy enough to do on our own
+    peak *= df*sums.squeeze() # un-normalize the data
+    return peak
+
+
+def gather_data(filename):
+    import numpy as np
+    from scipy.io import wavfile
+    import scipy.signal as sg
+    fs, wav = wavfile.read(filename)
+    wav = wav.astype(np.double)
+    freq, time, spec = sg.spectrogram(wav, fs, nperseg=16384)
+    arg_sort = np.argsort(spec,  axis=0)
+    corrections, nf = make_corrections(spec,  freq)
+    arg_sort_corr = np.argsort(corrections,  axis=0)
+    return fs, wav, freq, time, spec, arg_sort, corrections, nf, arg_sort_corr
+    
+    
+    
+    
+    
