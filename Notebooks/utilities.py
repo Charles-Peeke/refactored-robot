@@ -40,6 +40,7 @@ def make_corrections(spec, freq):
     a = 2**(1/12)
     lo_factor = 0.5*(1+1/a)
     hi_factor = 0.5*(1+a) 
+    df = freq[1] - freq[0]
     for i in range(len(note_freq)):
         lo = note_freq[i]*lo_factor
         hi = note_freq[i]*hi_factor
@@ -50,7 +51,7 @@ def make_corrections(spec, freq):
         
         if ind.sum() != 0:
             #row = spec[ind,:].max(0)
-            row = normal_peak(spec[ind,:], freq[ind])
+            row = normal_peak(spec[ind,:], df)
         else:
             row = np.zeros(spec.shape[1])
         rows.append(row)
@@ -72,6 +73,7 @@ def spect(wav, fs):
     a = 2**(1/12)
     lo_factor = 0.5*(1+1/a)
     hi_factor = 0.5*(1+a) 
+    
     full_spec = np.zeros((len(note_freq)-1, len(data[0][1])))
     for i,(nf,nperseg) in enumerate(zip(note_freq, nps)):
         nps_ind = nps_uniq.index(nperseg)
@@ -80,7 +82,8 @@ def spect(wav, fs):
         hi = nf*hi_factor
         ind = (freq>=lo)&(freq<=hi)
 #         print(nf, ind.sum(), abs(freq[ind] - nf).min() / nf)
-        peak = normal_peak(spec[ind,:], freq[ind])
+        df = freq[1] - freq[0]
+        peak = normal_peak(spec[ind,:], df)
         full_spec[i,:len(time)] = peak
 
     return note_freq[:-1], data[0][1], full_spec
@@ -105,16 +108,16 @@ def display_spec(time, freq, spec, ylim=8192):
     plt.gca().set_aspect('auto')
     plt.show()
 
-def normal_peak(vals, freq):
+def normal_peak(vals, dfreq):
     import numpy as np
-    if len(freq) == 1: return vals
-    df = freq[1] - freq[0] # difference between frequencies
-    sums = vals.sum(0, keepdims=True) # the sum across all values, for each time
+    if vals.shape[0] == 1: return vals
+    sums = vals.sum(0, keepdims=True) 
     weights = vals/sums # the weights for each time
-    mean = (weights*freq[:,None]).sum(0, keepdims=True) # the weighted mean
-    var = (((freq[:,None]-mean)**2)*weights).sum(0)/df # the weighted variance
-    peak = 1/np.sqrt(2*np.pi*var) # easy enough to do on our own
-    peak *= df*sums.squeeze() # un-normalize the data
+    freqs = np.arange(1, vals.shape[0]+1)[:,None] # approximation of frequencies (exact values not needed)
+    mean = (weights*freqs).sum(0, keepdims=True)
+    var = (((freqs-mean)**2)*weights).sum(0)/dfreq
+    peak = 1/np.sqrt(2*np.pi*var)
+    peak *= sums.squeeze()
     return peak
 
 
