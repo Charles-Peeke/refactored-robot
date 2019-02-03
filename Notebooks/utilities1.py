@@ -40,7 +40,6 @@ def make_corrections(spec, freq):
     a = 2**(1/12)
     lo_factor = 0.5*(1+1/a)
     hi_factor = 0.5*(1+a) 
-    df = freq[1] - freq[0]
     for i in range(len(note_freq)):
         lo = note_freq[i]*lo_factor
         hi = note_freq[i]*hi_factor
@@ -51,7 +50,7 @@ def make_corrections(spec, freq):
         
         if ind.sum() != 0:
             #row = spec[ind,:].max(0)
-            row = normal_peak(spec[ind,:], df)
+            row = normal_peak(spec[ind,:], freq[ind])
         else:
             row = np.zeros(spec.shape[1])
         rows.append(row)
@@ -74,7 +73,6 @@ def spect(wav, fs):
     a = 2**(1/12)
     lo_factor = 0.5*(1+1/a)
     hi_factor = 0.5*(1+a) 
-    
     full_spec = np.zeros((len(note_freq)-1, len(data[0][1])))
     for i,(nf,nperseg) in enumerate(zip(note_freq, nps)):
         nps_ind = nps_uniq.index(nperseg)
@@ -83,8 +81,7 @@ def spect(wav, fs):
         hi = nf*hi_factor
         ind = (freq>=lo)&(freq<=hi)
 #         print(nf, ind.sum(), abs(freq[ind] - nf).min() / nf)
-        df = freq[1] - freq[0]
-        peak = normal_peak(spec[ind,:], df)
+        peak = normal_peak(spec[ind,:], freq[ind])
         full_spec[i,:len(time)] = peak
 
     return note_freq[:-1], data[0][1], full_spec
@@ -107,18 +104,17 @@ def display_spec(time, freq, spec, ylim=8192):
     plt.ylabel('Frequency [Hz]')
     plt.xlabel('Time [sec]')
     plt.gca().set_aspect('auto')
-    plt.show()
 
-def normal_peak(vals, dfreq):
+def normal_peak(vals, freq):
     import numpy as np
-    if vals.shape[0] == 1: return vals
-    sums = vals.sum(0, keepdims=True) 
+    if len(freq) == 1: return vals
+    df = freq[1] - freq[0] # difference between frequencies
+    sums = vals.sum(0, keepdims=True) # the sum across all values, for each time
     weights = vals/sums # the weights for each time
-    freqs = np.arange(1, vals.shape[0]+1)[:,None] # approximation of frequencies (exact values not needed)
-    mean = (weights*freqs).sum(0, keepdims=True)
-    var = (((freqs-mean)**2)*weights).sum(0)/dfreq
-    peak = 1/np.sqrt(2*np.pi*var)
-    peak *= sums.squeeze()
+    mean = (weights*freq[:,None]).sum(0, keepdims=True) # the weighted mean
+    var = (((freq[:,None]-mean)**2)*weights).sum(0)/df # the weighted variance
+    peak = 1/np.sqrt(2*np.pi*var) # easy enough to do on our own
+    peak *= df*sums.squeeze() # un-normalize the data
     return peak
 
 
@@ -132,49 +128,7 @@ def gather_data(filename):
     arg_sort = np.argsort(spectrogram,  axis=0)
     return fs, wav, freq, time, spectrogram, arg_sort
     
-def precompute_spect(fs=44100):
-    """
-    Precomputes things for TensorFlow spectrograms based on the frequency sampling rate.
     
-    Returns:
-        nps_uniq - a list of the unique n-per-segment that are needed
-                   they are in sorted order so nps_uniq[0] gives the smallest nps
-        dfreqs   - a list of the delta-frequencies about the spectrograms for each n-per-segment
-                   in the same order as npw_uniq, each entry
-        notes    - a list of information about each note, each entry is a tuple of:
-                    * the index within nps_uniq and dfreqs to get other information
-                    * the slice to use to extract the necessary frequencies from the spectrogram
-    """
-    import numpy as np
-    
-    # Calculate number per segment for each range
-    smallest_nps = fs/24 * 4/3 
-    smallest_nps = 2**int(np.log2(smallest_nps))
-    note_freq = frequencies('A0', 'D8')
-    df = np.diff(note_freq)
-    nps = np.maximum(np.int64(2**np.ceil(np.log2(fs/df))), smallest_nps)
-    nps_uniq = list(np.unique(nps))
-
-    # Calculate the spectrogram frequencies
-    freqs = []
-    for nperseg in nps_uniq:
-        freqs.append(np.fft.rfftfreq(nperseg, 1/fs))
-    dfreqs = [freq[1]-freq[0] for freq in freqs]
-
-    # Build information up about the notes
-    a = 2**(1/12)
-    lo_factor = 0.5*(1+1/a)
-    hi_factor = 0.5*(1+a)
-    notes = []
-    for i,(nf,nperseg) in enumerate(zip(note_freq, nps)):
-        nps_ind = nps_uniq.index(nperseg)
-        freq  = freqs[nps_ind]
-        start = np.argmax(freq>=(nf*lo_factor))
-        end   = np.argmax(freq> (nf*hi_factor))
-        #notes.append((nps_ind, slice(start, end, 1)))
-        notes.append((nps_ind, (start, end)))
-
-    return nps_uniq, dfreqs, notes
     
     
     
