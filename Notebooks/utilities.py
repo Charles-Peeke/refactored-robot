@@ -176,5 +176,103 @@ def precompute_spect(fs=44100):
 
     return nps_uniq, dfreqs, notes
     
+def gather_samples(notes=note_names('C1', 'C2'), nsamples=4):
+    '''
+    Gather all of the files used to train the model
+    Trombone and Guitar to setup a binary network
+    '''
+    sample_files = []
+    target_vals = []
+    location = '../samples/'
+    instruments = ['Trombone', 'Guitar', 'Piano']
+    for i, name in enumerate(instruments):
+        for note in notes:
+            for j in range(1, nsamples+1):
+                file_name = location +name+"/"+name +"_"+note[:-1]+"("+str(j)+").wav"
+                sample_files.append(file_name)
+                target_vals.append(i)
+    return sample_files, target_vals
+
+def tf_normal_peak(vals, dfreq):
+    '''
+    Calculate the normal peak of the frequencies with tensors
+    '''
+    import numpy as np
+    import tensorflow as tf
+
+    sums = tf.reduce_sum(vals, 0, keepdims=True)
     
+    weights = tf.div_no_nan(vals,sums)
+        
+    freqs = tf.range(tf.cast(tf.shape(vals)[0], 'float64'), dtype='float64')
+    
+    mean = tf.reduce_sum(
+        tf.cast(weights, 'float64') * tf.cast(freqs[:,None], 'float64'),  
+        axis=0,
+        keepdims=True)
+    
+    var = tf.truediv(tf.reduce_sum(tf.cast(((freqs[:,None]-mean)**2), 'float64')*tf.cast(weights, 'float64'), 0),dfreq)
+    
+    denom_var = tf.multiply(tf.constant(2.0, dtype='float64'), np.pi)
+    
+    denom_var_mult = tf.scalar_mul(denom_var, var)
+    
+    denom = tf.sqrt(tf.abs(denom_var_mult))
+    
+    dst_peak = tf.div_no_nan(tf.constant(1.0, dtype='float64'),denom)
+#     with tf.Session() as sess:
+#         print(sess.run(dst_peak))
+
+    peak = (tf.cast(dst_peak, 'float64') * tf.cast(dfreq, 'float64') * tf.cast(tf.squeeze(sums), 'float64')) if (dst_peak != 'nan') else 0
+    return peak
+
+
+def preprocess(filename, nps_uniq, dfreqs, notes, smallest_nps, note_freq):
+    from scipy.io import wavfile
+    import numpy as np
+    # Gathering the Data
+    # Read the Wave File
+    fs, wav = wavfile.read(filename)
+    if wav.ndim == 2: wav = wav[:,0]
+    wav = wav.astype(np.double)
+    # Calculate the Spectrogram
+#     for sec in range(8):
+#         wav_sec = wav[sec*(len(wav)//8):(sec+1)*(len(wav)//8)]
+#         print(len(wav_sec))
+#     print(wav.shape)
+    spectrogram = tf_spect(filename, wav, nps_uniq, dfreqs, notes, smallest_nps, note_freq)
+#     print(spectrogram)
+#     arg_sort = np.argsort(spectrogram,  axis=0)
+    return spectrogram
+
+
+
+def tf_spect(name, wav, nps_uniq, dfreqs, notes, smallest_nps, note_freq):  
+    import tensorflow as tf
+    import numpy as np
+    data = []
+    first = True
+    # Caclculating the Spectrogram
+    
+    for nperseg in nps_uniq:
+        signals = tf.convert_to_tensor(wav, tf.float32)
+        stfts = tf.contrib.signal.stft(signals, frame_length=np.int32(3*nperseg - 2*smallest_nps),
+                                       frame_step=np.int32(nperseg),
+                                       fft_length=np.int32(3*nperseg - 2*smallest_nps))
+        magnitude_spectrograms = tf.abs(stfts)
+        data.append(magnitude_spectrograms)
+    fs_raw = tf.Variable(tf.zeros((len(note_freq)-1, tf.shape(data[0])[0]), tf.float64), name='Raw_Freqs')
+    assignments = []
+    # Calculate the normal peaks in order to make a more clear spectrogram
+    for i, (nps_ind, slc) in enumerate(notes):
+        tf_spec = data[nps_ind]
+        spec_slc = tf_spec[:,slc[0]:slc[1]]
+        tf_np = tf.cast(spec_slc[:,0], tf.float64) if slc[1]-slc[0] == 1 else tf_normal_peak(tf.transpose(spec_slc), dfreqs[nps_ind])
+        time = tf.shape(tf_spec)[0]
+        assignments.append(fs_raw[i,:time].assign(tf_np))
+        
+    with tf.control_dependencies(assignments):
+        full_spec = fs_raw.read_value()
+    # Return the note frequencies, original data, and spectrogram with normalized peaks
+    return full_spec#, fs_raw, assignments
     
